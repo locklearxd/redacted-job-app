@@ -1,0 +1,305 @@
+---
+## ZTP site turnup playbook for Cisco SMB switches and FortiAPs (can be modded for other vendors in the future)
+## PART ONE FOR IDENTIFICATION OF SITE MGMT PREFIX TARGETS AND CREATING HOST GROUP
+- name: FTNT/CISCO managed services turnup playbook part one
+  hosts: localhost
+  gather_facts: true
+  collections:
+    - community.ciscosmb.command
+    - ansible.builtin.uri
+    - ansible.netbox.netbox
+  vars:
+      NETBOX_TOKEN: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65653364316530336531343035336136616337363864643835346338363463326630626133333637
+          REDACTED FULL HASH
+
+  tasks:
+
+    - block:
+
+      - name: Netbox site lookups based on Ansible tag for turnup tasks
+        set_fact:
+          nb_site_id: "{{ nb_site_id | default ([]) + ['site_id=' + item.value.id | string + ' vrf_id=1'] }}"
+        loop: "{{ query('netbox.netbox.nb_lookup', 'sites',
+                    api_endpoint='https://REDACTED',
+                    api_filter='tag=ansible',
+                    token=NETBOX_TOKEN ) }}"
+
+      - name: Netbox site prefix lookup based on site lookup for turnup tasks
+        set_fact:
+          nb_site_prefixes: "{{ nb_site_prefixes | default ([]) + [ query('netbox.netbox.nb_lookup', 'prefixes', api_endpoint='https://REDACTED', api_filter=item, token=NETBOX_TOKEN ) ] }}"
+        with_items: "{{ nb_site_id }}"
+
+      - name: Netbox site management prefix lookup based on Ansible tagged site prefixes
+        set_fact:
+          nb_site_mgmt_prefixes: "{{ nb_site_mgmt_prefixes | default ([]) + [ item.value.prefix ] }}"
+        with_items: "{{ nb_site_prefixes }}"
+
+      - name: Netbox prefix array creation for IP host list
+        set_fact:
+          nb_site_mgmt_ip_array: "{{ nb_site_mgmt_ip_array | default ([]) + [ nb_site_mgmt_ip_array | default ([]) | combine({'cidr': item }) | combine({'ip_start': item | ansible.utils.ipaddr('next_usable') }) | combine({'ip_end': item | ansible.utils.ipaddr('last_usable') }) ] }}"
+        loop: "{{ nb_site_mgmt_prefixes }}"
+
+      - name: IP array to IP list conversion task for 'mgmt_hosts' group
+        include_tasks: 'ztp-imports/ip-prefix-to-host-convert-task.yaml'
+        loop: "{{ nb_site_mgmt_ip_array }}"
+        loop_control:
+            loop_var: iitem
+
+## PART TWO FOR VALIDATING CONNECTIVITY AND CREATING NEW HOST GROUPS
+
+- name: FTNT/CISCO managed services turnup playbook part two
+  hosts: [mgmt_hosts]
+  gather_facts: false
+  collections:
+    - community.ciscosmb.command
+    - ansible.builtin.uri
+    - ansible.netbox.netbox
+
+  vars:
+      NETBOX_TOKEN: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65653364316530336531343035336136616337363864643835346338363463326630626133333637
+          REDACTED
+
+  tasks:
+
+    - block:
+
+      ## CISCO SMB SECTION
+
+      - name: Check for serial number to confirm device is Cisco CBS and reachable
+        community.ciscosmb.command:
+          commands:
+           - 'show system id'
+        register: system_id_result
+        vars:
+          ansible_connection: network_cli
+          ansible_ssh_user: ansible
+          ansible_ssh_pass: !vault |
+              $ANSIBLE_VAULT;1.1;AES256
+              32646136313733623834636534373935326237316538396432623739663063346537396262366365
+              6235656638333630373366306638323762353430636666300a313865306334636266643839343262
+              35313134353536353730303966313532336464396632616562646335373632333135303962346639
+              3039386562383764640a396163653332643336383231643230326233306662316131666561663366
+              39366236373232353566623133663438386334653437316237333364643136626464
+          ansible_network_os: community.ciscosmb.ciscosmb
+        ignore_errors: yes
+
+      - name: Cisco SMB IP and serial host list
+        set_fact:
+          cisco_smb_host_ips: "{{ cisco_smb_host_ips | default([]) + [ cisco_smb_host_ips | default([]) | combine({'ip': ansible_host }) | combine({'serial': cisco_smb_host_serial }) ] }}"
+        vars:
+          cisco_smb_host_serial: '{{ system_id_result.stdout_lines[0].2 | regex_replace("         1              ") }}'
+        when: system_id_result.failed is false
+
+      - name: Create Cisco SMB host group task for 'cisco_mgmt_hosts'
+        include_tasks: 'ztp-imports/ciscosmb-group-creation-task.yaml'
+        loop: "{{ cisco_smb_host_ips }}"
+        loop_control:
+            loop_var: cisco_smb_item
+        when: cisco_smb_host_ips is defined
+
+      ## FTNT FORTIAP SECTION
+
+      - name: Check for FortiAP response to confirm device is Fortinet FAP and reachable
+        uri:
+          url: "https://{{ inventory_hostname }}/logincheck"
+          return_content: true
+          method: POST
+          body_format: form-urlencoded
+          validate_certs: no
+          body:
+            username: admin
+            secretkey: REDACTED
+        register: fortios_ap_response1
+        vars:
+          ansible_connection: local
+        when: system_id_result.failed is true
+        ignore_errors: yes
+
+      - name: Check for FortiAP serial number
+        uri:
+          url: "https://{{ inventory_hostname }}/api/v1/sys-status"
+          return_content: true
+          method: GET
+          body_format: json
+          validate_certs: no
+          headers:
+            Accept: 'application/json'
+            Cookie: "{{ fortios_ap_response1.set_cookie }}"
+        register: fortios_ap_response2
+        vars:
+          ansible_connection: local
+        when: fortios_ap_response1 is defined and fortios_ap_response1.failed is false
+
+      - name: FortiAP IP and serial host list
+        set_fact:
+          ftnt_fortiap_host_ips: "{{ ftnt_fortiap_host_ips | default([]) + [ ftnt_fortiap_host_ips | default([]) | combine({'ip': ansible_host }) | combine({'serial': ftnt_fortiap_host_serial }) | combine({'cookie': ftnt_fortiap_host_cookie })] }}"
+        vars:
+          ftnt_fortiap_host_serial: "{{ fortios_ap_response2.json.serial_number }}"
+          ftnt_fortiap_host_cookie: "{{ fortios_ap_response1.set_cookie }}"
+        when: fortios_ap_response2 is defined and fortios_ap_response2.failed is false
+
+      - name: Create Fortinet FAP host group task for 'fortiap_mgmt_hosts'
+        include_tasks: 'ztp-imports/ftntfap-group-creation-task.yaml'
+        loop: "{{ ftnt_fortiap_host_ips }}"
+        loop_control:
+            loop_var: ftnt_fap_item
+        when: ftnt_fortiap_host_ips is defined
+
+## PART THREE FOR CISCO SMB CONFIG DELIVERY AND REBOOT
+
+- name: FTNT/CISCO managed services turnup playbook part three
+  hosts: [cisco_mgmt_hosts]
+  gather_facts: false
+  collections:
+    - community.ciscosmb.command
+    - ansible.builtin.uri
+    - ansible.netbox.netbox
+
+  vars:
+      NETBOX_TOKEN: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65653364316530336531343035336136616337363864643835346338363463326630626133333637
+          REDACTED
+
+  tasks:
+
+    - block:
+
+      - name: Check for hostname to confirm device is ready for provisioning
+        community.ciscosmb.command:
+          commands:
+           - 'show system | inc Name:'
+        register: hostname_result
+        vars:
+          ansible_connection: network_cli
+          ansible_ssh_user: ansible
+          ansible_ssh_pass: !vault |
+              $ANSIBLE_VAULT;1.1;AES256
+              32646136313733623834636534373935326237316538396432623739663063346537396262366365
+              6235656638333630373366306638323762353430636666300a313865306334636266643839343262
+              35313134353536353730303966313532336464396632616562646335373632333135303962346639
+              3039386562383764640a396163653332643336383231643230326233306662316131666561663366
+              39366236373232353566623133663438386334653437316237333364643136626464
+          ansible_network_os: community.ciscosmb.ciscosmb
+
+      - name: Set current system hostname to determine if provisioning is required
+        set_fact:
+          cbs_hostname: '{{ hostname_result.stdout_lines[0] | regex_replace("System Name:                              ") }}'
+
+      - name: Obtain device target name & configuration info from serial lookup
+        uri:
+          url: 'https://REDACTED/api/dcim/devices?serial={{ cisco_smb_serial }}'
+          return_content: true
+          method: GET
+          body_format: json
+          validate_certs: yes
+          headers:
+            accept: 'application/json'
+            authorization: "Token {{ NETBOX_TOKEN }}"
+        register: netbox_device_response
+        vars:
+          ansible_connection: local
+        when: 'cbs_hostname is defined and "provision-me-please" in cbs_hostname'
+
+      - name: Register device info from Netbox response
+        set_fact:
+          device_hostname: "{{ netbox_device_response | json_query('json.results[*].name | [0]') }}"
+        when: 'cbs_hostname is defined and "provision-me-please" in cbs_hostname'
+
+      - name: Download startup config from TFTP server to switch
+        community.ciscosmb.command:
+          commands:
+           - 'boot config tftp://REDACTED/switch-startupconfigs/{{ device_hostname }}.cfg'
+           - 'reload in 5'
+        vars:
+          ansible_connection: network_cli
+          ansible_ssh_user: ansible
+          ansible_ssh_pass: !vault |
+              $ANSIBLE_VAULT;1.1;AES256
+              32646136313733623834636534373935326237316538396432623739663063346537396262366365
+              6235656638333630373366306638323762353430636666300a313865306334636266643839343262
+              35313134353536353730303966313532336464396632616562646335373632333135303962346639
+              3039386562383764640a396163653332643336383231643230326233306662316131666561663366
+              39366236373232353566623133663438386334653437316237333364643136626464
+          ansible_network_os: community.ciscosmb.ciscosmb
+        when: 'cbs_hostname is defined and "provision-me-please" in cbs_hostname'
+
+## PART FOUR FOR FORTIAP STATIC CONFIGURATION DELIVERY
+
+- name: FTNT/CISCO managed services turnup playbook part four
+  hosts: [fortiap_mgmt_hosts]
+  gather_facts: false
+  collections:
+    - ansible.builtin.uri
+    - ansible.netbox.netbox
+
+  vars:
+      NETBOX_TOKEN: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65653364316530336531343035336136616337363864643835346338363463326630626133333637
+          REDACTED
+
+  tasks:
+
+    - block:
+
+      - name: Obtain device target name & configuration info from serial lookup
+        uri:
+          url: 'https://REDACTED/api/dcim/devices?serial={{ fap_serial }}'
+          return_content: true
+          method: GET
+          body_format: json
+          validate_certs: yes
+          headers:
+            accept: 'application/json'
+            authorization: "Token {{ NETBOX_TOKEN }}"
+        register: netbox_device_response
+        vars:
+          ansible_connection: local
+
+      - name: Set FortiAP IP config based on Netbox info
+        set_fact:
+          fap_ip: "{{ netbox_device_response | json_query('json.results[*].primary_ip4.address | [0]') | ansible.utils.ipaddr('address') }}"
+          fap_mask: "{{ netbox_device_response | json_query('json.results[*].primary_ip4.address | [0]') | ansible.utils.ipaddr('netmask') }}"
+          fap_gw: "{{ netbox_device_response | json_query('json.results[*].primary_ip4.address | [0]') | ansible.utils.ipaddr('first_usable') }}"
+
+      - name: Check for FortiAP network config static and mode
+        uri:
+          url: "https://{{ inventory_hostname }}/api/v1/cfg-get"
+          return_content: true
+          method: GET
+          body_format: json
+          validate_certs: no
+          headers:
+            Accept: 'application/json'
+            Cookie: "{{ fortios_ap_response1.set_cookie }}"
+        register: fortios_ap_config_response
+        vars:
+          ansible_connection: local
+        when: fap_ip is defined and netbox_device_response.failed is false
+
+      - name: POST network config to FortiAP
+        uri:
+          url: "https://{{ inventory_hostname }}/api/v1/cfg-set"
+          return_content: true
+          method: POST
+          body_format: json
+          validate_certs: no
+          headers:
+            Cookie: "{{ fap_cookie }}"
+          status_code: 202
+          body:
+            AP_IPADDR: "{{ fap_ip }}"
+            ADDR_MODE: "STATIC"
+            AP_MGMT_VLAN_ID: "1299"
+            AP_NETMASK: "{{ fap_mask }}"
+            IPGW: "{{ fap_gw }}"
+            AC_IPADDR_1: "{{ fap_gw }}"
+        register: fortiap_json_response
+        vars:
+          ansible_connection: local
+        when: 'fortios_ap_config_response.json.AP_IPADDR != fap_ip and fortios_ap_config_response.json.ADDR_MODE == "DHCP"'

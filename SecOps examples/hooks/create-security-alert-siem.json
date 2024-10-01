@@ -1,0 +1,13 @@
+[
+    {
+      "id": "create-security-alert",
+      "execute-command": "/home/secops/scripts/create-security-alert.sh",
+      "command-working-directory": "/home/secops/scripts",
+      "pass-arguments-to-command": [
+        {
+          "source": "payload",
+          "name": "fortianalyzer_notification"
+        }
+      ]
+    }
+  ]

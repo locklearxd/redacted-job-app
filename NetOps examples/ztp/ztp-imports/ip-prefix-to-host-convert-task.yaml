@@ -1,0 +1,5 @@
+## Task that takes IP subnet info and converts into IP host list for scan targets
+- add_host:
+    name: "{{ iitem.cidr | next_nth_usable(item | int) }}"
+    groups: mgmt_hosts
+  with_sequence: "start={{ iitem.ip_start | regex_search('\\d+$') }} end={{ iitem.ip_end | regex_search('\\d+$') }}"

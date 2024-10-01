@@ -1,0 +1,5 @@
+## Task that takes device hostname and adds to the cisco smb host group
+- add_host:
+    name: "{{ cisco_smb_item.ip }}"
+    groups: cisco_mgmt_hosts
+    cisco_smb_serial: "{{ cisco_smb_item.serial }}"

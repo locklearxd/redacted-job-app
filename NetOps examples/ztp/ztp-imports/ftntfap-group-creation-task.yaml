@@ -1,0 +1,6 @@
+## Task that takes device hostname and adds to the Fortinet FortiAP host group
+- add_host:
+    name: "{{ ftnt_fap_item.ip }}"
+    groups: fortiap_mgmt_hosts
+    fap_serial: "{{ ftnt_fap_item.serial }}"
+    fap_cookie: "{{ ftnt_fap_item.cookie }}"

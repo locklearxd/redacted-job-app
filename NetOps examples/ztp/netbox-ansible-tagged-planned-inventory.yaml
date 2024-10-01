@@ -1,0 +1,15 @@
+plugin: netbox.netbox.nb_inventory
+api_endpoint: https://REDACTED
+token: REDACTED
+validate_certs: true
+config_context: false
+group_by:
+  - device_roles
+query_filters:
+  - role: "l2-switch"
+  - role: "ngfw"
+  - role: "wap"
+  - status: planned
+device_query_filters:
+  - has_primary_ip: 'true'
+  - tag: "ansible"

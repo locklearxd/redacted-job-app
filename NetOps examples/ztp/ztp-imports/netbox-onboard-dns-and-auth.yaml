@@ -1,0 +1,297 @@
+---
+## REDACTED playbook for creating device in NPS and DNS for SSO
+- name: REDACTED Netbox sync to REDACTED NPS PLAYBOOK
+  hosts: all
+  gather_facts: false
+  collections:
+    - ansible.community.windows
+
+  tasks:
+    - name: Deploy DNS records and NPS client if necessary for target inventory from Netbox
+      block:
+        # This task parses the original IP address payload and removes the mask
+        - name: DNS/NPS IP address parsing / sanitize task
+          set_fact:
+            primaryipv4parsed: "{{ primary_ip4 | ansible.utils.ipv4('address') }}"
+
+        # This task parses the filtered IP address payload and removes the network ID for L2 devices
+        - name: DNS IP address parsing task for PTR L2 devices
+          set_fact:
+            primaryipv4parsed2: "{{ primary_ip4 | ipaddr('revdns') | regex_replace('.10.in-addr.arpa.') }}"
+          when:
+            - '"l2-switch" in device_roles or "wap" in device_roles'
+
+        # This task parses the filtered IP address payload and removes the network ID for L3 devices
+        - name: DNS IP address parsing task for PTR L3 devices
+          set_fact:
+            primaryipv4parsed2: "{{ primary_ip4 | ipaddr('revdns') | regex_replace('.254.10.in-addr.arpa.') }}"
+          when:
+            - '"ngfw" in device_roles'
+
+        # This task runs a command to add a device to the management DNS zone
+        - name: Create static A record with management IP address
+          win_dns_record:
+            state: present
+            name: "{{ inventory_hostname }}"
+            type: "A"
+            value: "{{ primaryipv4parsed }}"
+            zone: "management.REDACTED.com"
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a command to add a device to the management DNS PTR zone for L2 devices
+        - name: Create static PTR record with management IP address for L2 devices
+          win_dns_record:
+            state: present
+            name: "{{ primaryipv4parsed2 }}"
+            type: "PTR"
+            value: "{{ inventory_hostname }}.management.REDACTED.com"
+            zone: "10.in-addr.arpa"
+          when:
+            - '"wap" in device_roles or "l2-switch" in device_roles'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a command to add a device to the management DNS PTR zone for L3 devices
+        - name: Create static PTR record with management IP address for L3 devices
+          win_dns_record:
+            state: present
+            name: "{{ primaryipv4parsed2 }}"
+            type: "PTR"
+            value: "{{ inventory_hostname }}.management.REDACTED.com"
+            zone: "10.in-addr.arpa"
+          when:
+            - '"ngfw" in device_roles'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a powershell command to check for the device in NPS
+        - name: Run a PowerShell command to check for the device in NPS for SSO
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { Get-NpsRadiusClient | Where-Object -Property Name -eq {{ inventory_hostname }} | Select-Object -ExpandProperty Enabled }"
+          register: npsresult
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+
+        # This task runs a powershell command to create the device in NPS as needed for L2 devices
+        - name: Run a PowerShell command to create the device in NPS for SSO for L2 devices
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { New-NpsRadiusClient -Address '{{ primaryipv4parsed }}' -Name '{{ inventory_hostname }}' -SharedSecret '{{ nps_l2_secret}}' -Vendor Cisco }"
+          when:
+            - '"l2-switch" in device_roles'
+            - '"True" not in npsresult.stdout'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+            - nps_l2_secret: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+
+        # This task runs a powershell command to create the device in NPS as needed for L3 devices
+        - name: Run a PowerShell command to create the device in NPS for SSO for L3 devices
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { New-NpsRadiusClient -Address '{{ primaryipv4parsed }}' -Name '{{ inventory_hostname }}' -SharedSecret '{{ nps_l3_secret}}' }"
+          when:
+            - '"ngfw" in device_roles'
+            - '"True" not in npsresult.stdout'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+            - nps_l3_secret: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+
+      rescue:
+        # This task parses the original IP address payload and removes the mask
+        - name: DNS/NPS IP address parsing task
+          set_fact:
+            primaryipv4parsed: "{{ primary_ip4 | ansible.utils.ipv4('address') }}"
+
+        # This task parses the filtered IP address payload and removes the network ID for L2 devices
+        - name: DNS IP address parsing task for PTR L2 devices
+          set_fact:
+            primaryipv4parsed2: "{{ primary_ip4 | ipaddr('revdns') | regex_replace('.10.in-addr.arpa.') }}"
+          when: 
+            - '"wap" in device_roles or "l2-switch" in device_roles'
+
+        # This task parses the filtered IP address payload and removes the network ID for L3 devices
+        - name: DNS IP address parsing task for PTR L3 devices
+          set_fact:
+            primaryipv4parsed2: "{{ primary_ip4 | ipaddr('revdns') | regex_replace('.254.10.in-addr.arpa.') }}"
+          when:
+            - '"ngfw" in device_roles'
+
+        # This task runs a command to add a device to the management DNS zone
+        - name: Create static A record with management IP address
+          win_dns_record:
+            state: present
+            name: "{{ inventory_hostname }}"
+            type: "A"
+            value: "{{ primaryipv4parsed }}"
+            zone: "management.REDACTED.com"
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM 
+            - ansible_password: !vault | 
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a command to add a device to the management DNS PTR zone for L2 devices
+        - name: Create static PTR record with management IP address for L2 devices
+          win_dns_record:
+            state: present
+            name: "{{ primaryipv4parsed2 }}"
+            type: "PTR"
+            value: "{{ inventory_hostname }}.management.REDACTED.com"
+            zone: "10.in-addr.arpa"
+          when: 
+            - '"wap" in device_roles or "l2-switch" in device_roles'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a command to add a device to the management DNS PTR zone for L3 devices
+        - name: Create static PTR record with management IP address for L3 devices
+          win_dns_record:
+            state: present
+            name: "{{ primaryipv4parsed2 }}"
+            type: "PTR"
+            value: "{{ inventory_hostname }}.management.REDACTED.com"
+            zone: "10.in-addr.arpa"
+          when: 
+            - '"ngfw" in device_roles'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+
+        # This task runs a powershell command to check for the device in NPS
+        - name: Run a PowerShell command to check for the device in NPS for SSO
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { Get-NpsRadiusClient | Where-Object -Property Name -eq {{ inventory_hostname }} | Select-Object -ExpandProperty Enabled }"
+          register: npsresult
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+
+        # This task runs a powershell command to create the device in NPS as needed for L2 devices
+        - name: Run a PowerShell command to create the device in NPS for SSO for L2 devices
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { New-NpsRadiusClient -Address '{{ primaryipv4parsed }}' -Name '{{ inventory_hostname }}' -SharedSecret '{{ nps_l2_secret }}' -Vendor Cisco }"
+          when: 
+            - '"l2-switch" in device_roles'
+            - '"True" not in npsresult.stdout'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+            - nps_l2_secret: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+
+        # This task runs a powershell command to create the device in NPS as needed for L3 devices
+        - name: Run a PowerShell command to create the device in NPS for SSO for L3 devices
+          win_shell: "Invoke-Command -ComputerName REDACTED.REDACTED.com -ScriptBlock { New-NpsRadiusClient -Address '{{ primaryipv4parsed }}' -Name '{{ inventory_hostname }}' -SharedSecret '{{ nps_l3_secret }}' }"
+          when: 
+            - '"ngfw" in device_roles'
+            - '"True" not in npsresult.stdout'
+          delegate_to: REDACTED.REDACTED.com
+          vars:
+            - ansible_connection: winrm
+            - ansible_user: ansible@REDACTED.COM
+            - ansible_password: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED
+            - ansible_port: 5986
+            - ansible_winrm_transport: kerberos
+            - ansible_winrm_message_encryption: auto
+            - ansible_winrm_kerberos_delegation: yes
+            - nps_l3_secret: !vault |
+                $ANSIBLE_VAULT;1.1;AES256
+                32646136313733623834636534373935326237316538396432623739663063346537396262366365
+                REDACTED

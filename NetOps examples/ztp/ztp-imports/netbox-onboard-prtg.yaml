@@ -1,0 +1,94 @@
+## REDACTED playbook for creating devices in PRTG for monitoring
+- name: REDACTED Netbox Sync to PRTG PLAYBOOK
+  hosts: all
+  gather_facts: false
+  collections:
+    - ansible.builtin.uri
+
+# This task parses the original IP address payload and removes the mask
+  tasks:
+
+   - name: PRTG IP address parsing task
+     set_fact:
+       primaryipv4parsed: "{{ primary_ip4 | ansible.utils.ipv4('address') }}"
+
+# This GET request determines if the device exists within PRTG based on tree size response
+   - name: PRTG GET network device
+     uri:
+       url: "https://REDACTED/api/table.json?content=devices&columns=objid,name,host,status,location&filter_device={{ inventory_hostname }}&username=ansible&passhash={{ prtg_passhash }}"
+       return_content: true
+       validate_certs: yes
+       status_code: [200]
+       method: GET
+       headers:
+         Host: REDACTED
+     register: prtg_lookup_response
+     delegate_to: localhost
+     vars:
+     - prtg_passhash: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          38386131363034303439346438373565343031323135313465316466323566383539636263323863
+          REDACTED
+
+# This POST request creates the firewall within PRTG in a paused state
+   - name: PRTG POST firewall device 
+     uri: 
+       url: "https://REDACTED/api/duplicateobject.htm?id=4125&name={{ inventory_hostname }}&host={{ primaryipv4parsed }}&targetid=4026&username=ansible&passhash={{ prtg_passhash }}"
+       return_content: true
+       validate_certs: yes
+       status_code: [302]
+       method: POST
+       headers:
+         Host: REDACTED
+     register: prtg_response
+     when:
+       - '"ngfw" in device_roles'
+       - 'prtg_lookup_response.json.treesize == 0'
+     delegate_to: localhost
+     vars:
+     - prtg_passhash: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          38386131363034303439346438373565343031323135313465316466323566383539636263323863
+          REDACTED
+
+# This POST request creates the switch within PRTG in a paused state
+   - name: PRTG POST switch device 
+     uri: 
+       url: "https://REDACTED/api/duplicateobject.htm?id=4170&name={{ inventory_hostname }}&host={{ primaryipv4parsed }}&targetid=4122&username=ansible&passhash={{ prtg_passhash }}"
+       return_content: true
+       validate_certs: yes
+       status_code: [302]
+       method: POST
+       headers:
+         Host: REDACTED
+     register: prtg_response
+     when:
+       - '"l2-switch" in device_roles'
+       - 'prtg_lookup_response.json.treesize == 0'
+     delegate_to: localhost
+     vars:
+     - prtg_passhash: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          38386131363034303439346438373565343031323135313465316466323566383539636263323863
+          REDACTED
+
+# This POST request creates the WAP within PRTG in a paused state
+   - name: PRTG POST WAP device 
+     uri: 
+       url: "https://REDACTED/api/duplicateobject.htm?id=4172&name={{ inventory_hostname }}&host={{ primaryipv4parsed }}&targetid=4123&username=ansible&passhash={{ prtg_passhash }}"
+       return_content: true
+       validate_certs: yes
+       status_code: [302]
+       method: POST
+       headers:
+         Host: REDACTED
+     register: prtg_response
+     when:
+       - '"wap" in device_roles'
+       - 'prtg_lookup_response.json.treesize == 0'
+     delegate_to: localhost
+     vars:
+     - prtg_passhash: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          38386131363034303439346438373565343031323135313465316466323566383539636263323863
+          REDACTED
